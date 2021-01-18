@@ -15,6 +15,19 @@
     </description>
     <params>
         <param field="Address" label="MAC Address" width="200px" required="true"/>
+        <param field="Mode1" label="Bluetooth device" width="100px">
+            <options>
+                <option label="0" value="0" default="true"/>
+                <option label="1" value="1"/>
+                <option label="2" value="2"/>
+            </options>
+        </param>
+        <param field="Mode2" label="Light sensor" width="100px">
+            <options>
+                <option label="True" value="True"/>
+                <option label="False" value="False" default="true"/>
+            </options>
+        </param>
     </params>
 </plugin>
 """
@@ -39,8 +52,12 @@ class BasePlugin:
     def onStart(self):
         Domoticz.Log("onStart called")
         Domoticz.Heartbeat(30)
+        Domoticz.Log("Address: "+Parameters["Address"])
         if len(Devices) == 0:
             Domoticz.Device("Blinds", Unit=1, Used=1, Type=244, Subtype=73, Switchtype=13).Create()
+            Domoticz.Device("Position", Unit=2, Used=1, TypeName="Percentage").Create()
+            if Parameters["Mode2"] == "True":
+                Domoticz.Device("Light", Unit=3, Used=1, TypeName="Percentage").Create()
 
     def onStop(self):
         Domoticz.Log("onStop called")
@@ -54,27 +71,35 @@ class BasePlugin:
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Log("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level))
         try:
-            dev = btle.Peripheral(Parameters["Address"])
-
+            #dev = btle.Peripheral("02:14:a1:87:28:f5", iface=0)
+            dev = btle.Peripheral(Parameters["Address"], iface=int(Parameters["Mode1"]))
+            
             bSuccess = False
             BlindsControlService = dev.getServiceByUUID("fe50")
-            if (BlindsControlService):
-                BlindsControlServiceCharacteristic = BlindsControlService.getCharacteristics("fe51")[0]
-                if (BlindControlServiceCharacteristic):
-                    if str(Command) == "On":
-                        bSuccess = write_message(BlindsControlServiceCharacteristic, dev, IdMove, [0], False)
-                    elif str(Command) == "Off":
-                        bSuccess = write_message(BlindsControlServiceCharacteristic, dev, IdMove, [100], False)
-                    elif str(Command) == "Set Level":
-                        bSuccess = write_message(BlindsControlServiceCharacteristic, dev, IdMove, [Level], False)
-                    elif str(Command) == "Stop":
-                        bSuccess = write_message(BlindsControlServiceCharacteristic, dev, IdMove, [0xcc], False)
-
-            if (bSuccess):
-                Devices[Unit].Update(nValue=1,sValue=str(Level))
+            Domoticz.Log(str(BlindsControlService))
+            BlindsControlServiceCharacteristic = BlindsControlService.getCharacteristics("fe51")[0]
+            Domoticz.Log(str(BlindsControlServiceCharacteristic))
+            if str(Command) == "On":
+                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [0], False)
+                bSuccess = write_message(BlindsControlServiceCharacteristic, dev, self.IdMove, [0], False)
+            elif str(Command) == "Off":
+                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [100], False)
+                bSuccess = write_message(BlindsControlServiceCharacteristic, dev, self.IdMove, [100], False)
+            elif str(Command) == "Set Level":
+                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [Level], False)
+                bSuccess = write_message(BlindsControlServiceCharacteristic, dev, self.IdMove, [Level], False)
             dev.disconnect()
-        except btle.BTLEDisconnectError as e:
-            Domoticz.Log(str(e))
+ 
+            if (bSuccess):
+                theLevel = Level
+                if str(Command) == "On":
+                    theLevel = 0
+                elif str(Command) == "Off":
+                    theLevel = 100
+                Devices[Unit].Update(nValue=theLevel,sValue=str(theLevel))
+                Devices[2].Update(nValue=theLevel,sValue=str(theLevel))
+        except btle.BTLEException as err:
+            Domoticz.Log(str(err))
 
     def onNotification(self, Name, Subject, Text, Status, Priority, Sound, ImageFile):
         Domoticz.Log("Notification: " + Name + "," + Subject + "," + Text + "," + Status + "," + str(Priority) + "," + Sound + "," + ImageFile)
@@ -154,6 +179,7 @@ def write_message(characteristic, dev, id, data, bWaitForNotifications):
     
     if (characteristic):
         result = characteristic.write(msg)
+        Domoticz.Log(str(result))
         if (result["rsp"][0] == "wr"):
             ret = True
             if (bWaitForNotifications):
