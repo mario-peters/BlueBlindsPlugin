@@ -40,8 +40,6 @@ class BasePlugin:
     # Msg format: 9a <id> <len> <data * len> <xor csum>
     IdMove = 0x0d  #not used in code yet
     IdStop = 0x0a
-    IdBattery = 0xa2
-    IdLight = 0xaa
     IdPosition = 0xa7
     IdPosition2 = 0xa8  #not used in code yet
     IdPosition3 = 0xa9  #not used in code yet
@@ -76,14 +74,14 @@ class BasePlugin:
             
             bSuccess = False
             BlindsControlService = dev.getServiceByUUID("fe50")
-            Domoticz.Log(str(BlindsControlService))
+            #Domoticz.Log(str(BlindsControlService))
             BlindsControlServiceCharacteristic = BlindsControlService.getCharacteristics("fe51")[0]
-            Domoticz.Log(str(BlindsControlServiceCharacteristic))
+            #Domoticz.Log(str(BlindsControlServiceCharacteristic))
             if str(Command) == "On":
-                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [0], False)
+                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [100], False)
                 bSuccess = write_message(BlindsControlServiceCharacteristic, dev, self.IdMove, [0], False)
             elif str(Command) == "Off":
-                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [100], False)
+                #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [0], False)
                 bSuccess = write_message(BlindsControlServiceCharacteristic, dev, self.IdMove, [100], False)
             elif str(Command) == "Set Level":
                 #bSuccess = write_message(BlindsControlServiceCharacteristic, dev, 0x0d, [Level], False)
@@ -93,9 +91,9 @@ class BasePlugin:
             if (bSuccess):
                 theLevel = Level
                 if str(Command) == "On":
-                    theLevel = 0
-                elif str(Command) == "Off":
                     theLevel = 100
+                elif str(Command) == "Off":
+                    theLevel = 0
                 Devices[Unit].Update(nValue=theLevel,sValue=str(theLevel))
                 Devices[2].Update(nValue=theLevel,sValue=str(theLevel))
         except btle.BTLEException as err:
@@ -109,6 +107,27 @@ class BasePlugin:
 
     def onHeartbeat(self):
         Domoticz.Log("onHeartbeat called")
+        try:
+            dev = btle.Peripheral(Parameters["Address"], iface=int(Parameters["Mode1"]))
+            BlindsControlService = dev.getServiceByUUID("fe50")
+            if (BlindsControlService):
+                BlindsControlServiceCharacteristic = BlindsControlService.getCharacteristics("fe51")[0]
+                if (BlindsControlServiceCharacteristic):
+                    if BlindsControlServiceCharacteristic.supportsRead():
+                        dev.setDelegate(BlindDelegate())
+                        global IdBattery
+                        write_message(BlindsControlServiceCharacteristic, dev, IdBattery, [0x01], True)
+                        global BatteryPct
+                        Domoticz.Log("Battery: "+str(BatteryPct))
+                        Devices[1].Update(nValue=Devices[1].nValue,sValue=Devices[1].sValue,BatteryLevel=BatteryPct)
+                        if Parameters["Mode2"] == "True":
+                            write_message(BlindsControlServiceCharacteristic, dev, IdLight, [0x01], True)
+                            global LightPct
+                            Domoticz.Log("Light: "+str(LightPct))
+                            Devices[3].Update(nValue=int(LightPct),sValue=str(LightPct))
+            dev.disconnect()
+        except btlee.BTLEException as err:
+            Domoticz.Log(str(err))
 
 global _plugin
 _plugin = BasePlugin()
@@ -187,3 +206,29 @@ def write_message(characteristic, dev, id, data, bWaitForNotifications):
                     #print(datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S") + " -->  BTLE Notification recieved", flush=True)
                     pass
     return ret
+
+BatteryPct = None
+LightPct = None
+
+IdBattery = 0xa2
+IdLight = 0xaa
+
+class BlindDelegate(btle.DefaultDelegate):
+    def __init__(self):
+        btle.DefaultDelegate.__init__(self)
+    def handleNotification(self, cHandle, data):
+        print(data)
+        #if (data[1] == IdBattery):
+        if (data[1] == 0xa2):
+            global BatteryPct
+            BatteryPct = data[7]
+        #elif (data[1] == IdPosition):
+        elif (data[1] == 0xa7):
+            global PositionPct
+            PositionPct = data[5]
+        #elif (data[1] == IdLight):
+        elif (data[1] == 0xaa):
+            global LightPct
+            LightPct = data[4] * 12.5
+        else:
+            print("Unknown identifier notification recieved: " + str(data[1:2]))
